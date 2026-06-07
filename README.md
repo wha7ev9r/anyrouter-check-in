@@ -430,6 +430,13 @@ uv run bandit -r . -c pyproject.toml
 uv run pytest tests/ --cov=.
 ```
 
+## ⚠️ 个人配置备忘 (ksbbs fork)
+
+- **`ANYROUTER_ACCOUNTS`**：Secret 的名字填 `ANYROUTER_ACCOUNTS`（不是 `NAME`/`VALUE`）
+- **AgentRouter 需要代理**：默认 `use_proxy: true`，必须配 `PROXY_SUBSCRIPTION_URL`（Clash 订阅链接）
+- **推荐用邮箱密码登录**：`{"email":"xxx","password":"xxx"}`，不用手动抓 cookies 和 api_user
+- **流量**：每次签到只消耗几 MB，建议用付费节点（免费 IP 质量差可能失败）
+
 ## 免责声明
 
 本脚本仅用于学习和研究目的，使用前请确保遵守相关网站的使用条款.

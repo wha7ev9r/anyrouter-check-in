@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
@@ -73,7 +74,7 @@ _WAF_BLOCKED_REGEX = f'/{_WAF_BLOCKED_RAW}/i'
 _WAF_SLIDE_DETECT_JS = f"""() => {{
 {_VISIBLE_CHECK_JS}
 	const text = document.body?.innerText || '';
-	if (!/slide to complete|slide to verify|Access Verification/i.test(text)) return false;
+	if (!/{_WAF_BLOCKED_RAW}/i.test(text)) return false;
 	if (document.querySelector('#username, input[name="username"], input[name="email"], form.semi-form')) return false;
 	return true;
 }}"""
@@ -404,11 +405,11 @@ async def bypass_slide_waf(page: Page, provider: str = '', account_name: str = '
 		hcy = hy + handle_info['height'] / 2
 
 		track_width = handle_info['width']
-		track_selectors = _SLIDER_TRACK_SELECTORS
-		for sel in track_selectors:
+		for sel in _SLIDER_TRACK_SELECTORS:
+			escaped_sel = json.dumps(sel)
 			track_el = await page.evaluate(
 				f"""() => {{
-					const el = document.querySelector('{sel.replace("'", "\\'")}');
+					const el = document.querySelector({escaped_sel});
 					if (!el) return null;
 					const r = el.getBoundingClientRect();
 					return {{x: r.x, y: r.y, width: r.width, height: r.height}};
@@ -420,7 +421,7 @@ async def bypass_slide_waf(page: Page, provider: str = '', account_name: str = '
 
 		drag_distance = track_width - handle_info['width']
 
-		if attempt < 5:
+		if attempt < SLIDE_DRAG_RETRIES - 1:
 			drag_distance = drag_distance * (0.85 + 0.15 * (attempt % 2))
 		else:
 			drag_distance = track_width

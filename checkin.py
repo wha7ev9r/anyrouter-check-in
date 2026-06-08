@@ -109,7 +109,7 @@ async def get_waf_cookies_with_browser(
 		print(f'[PROCESSING] {account_name}: Access login page to get initial cookies...')
 
 		await page.goto(login_url, wait_until='domcontentloaded')
-		await wait_for_waf_ready(page, provider='waf-cookies', account_name=account_name)
+		await wait_for_waf_ready(page)
 
 		cookies = await page.context.cookies()
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import time
@@ -68,110 +67,13 @@ _VISIBLE_CHECK_JS = """
 	const countVisible = (selector) => [...document.querySelectorAll(selector)].filter(isVisible).length;
 """
 
-_WAF_BLOCKED_RAW = r'请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human|slide to complete|slide to verify|Access Verification'
-_WAF_BLOCKED_REGEX = f'/{_WAF_BLOCKED_RAW}/i'
-
-_WAF_SLIDE_DETECT_JS = f"""() => {{
-{_VISIBLE_CHECK_JS}
-	const text = document.body?.innerText || '';
-	if (!/{_WAF_BLOCKED_RAW}/i.test(text)) return false;
-	if (document.querySelector('#username, input[name="username"], input[name="email"], form.semi-form')) return false;
-	return true;
-}}"""
-
-_SLIDER_HANDLE_SELECTORS = [
-	'.slider-handle',
-	'#slider-handle',
-	'.slider-btn',
-	'.slider-button',
-	'.slide-btn',
-	'.slide-handle',
-	'.nc_scale_btn',
-	'#nc_1__btn',
-	'.nc_1_btn',
-	'#nc_1__scale_btn',
-	'.drag-handle',
-	'.handle',
-	'#nc_1_wrapper .nc_scale .nc_scale_btn',
-	'button[class*="slider"]',
-	'div[class*="slider"]',
-	'button[class*="handle"]',
-	'div[class*="handle"]',
-	'.btn_slide',
-	'.slide-verify-btn',
-]
-
-_SLIDER_TRACK_SELECTORS = [
-	'.slider-track',
-	'#slider-track',
-	'.slider',
-	'#slider',
-	'.track',
-	'.slide-track',
-	'.nc_scale',
-	'#nc_1__scale',
-	'.nc_1_scale',
-	'#nc_1_wrapper',
-	'[class*="slider-track"]',
-]
-
-_FIND_SLIDER_HANDLE_JS = (
-	"""() => {
-	const isVisible = (el) => {
-		if (!el || !el.isConnected) return false;
-		const style = window.getComputedStyle(el);
-		if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) return false;
-		const rect = el.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	};
-
-	const handleSelectors = [
-"""
-	+ '\n'.join(f"\t\t'{s}'," for s in _SLIDER_HANDLE_SELECTORS)
-	+ """
-	];
-
-	for (const sel of handleSelectors) {
-		for (const el of document.querySelectorAll(sel)) {
-			if (isVisible(el)) {
-				const r = el.getBoundingClientRect();
-				return {x: r.x, y: r.y, width: r.width, height: r.height, foundBy: sel};
-			}
-		}
-	}
-
-	const elements = document.querySelectorAll('button, div, span, a');
-	for (const el of elements) {
-		if (!isVisible(el)) continue;
-		const r = el.getBoundingClientRect();
-		if (r.width < 80 && r.width > 20 && r.height < 80 && r.height > 20) {
-			const bg = window.getComputedStyle(el).backgroundColor;
-			const hasOrange = bg.includes('rgb(255,') || bg.includes('orange') || bg.includes('#f') || bg.includes('#e');
-			if (hasOrange || el.className.toLowerCase().includes('slider') || el.className.toLowerCase().includes('handle')) {
-				return {x: r.x, y: r.y, width: r.width, height: r.height, foundBy: 'fallback-color'};
-			}
-		}
-	}
-
-	for (const el of elements) {
-		if (!isVisible(el)) continue;
-		const r = el.getBoundingClientRect();
-		if (r.width < 80 && r.width > 20 && r.height < 80 && r.height > 20 && r.x < 200) {
-			return {x: r.x, y: r.y, width: r.width, height: r.height, foundBy: 'fallback-left'};
-		}
-	}
-
-	return null;
-}"""
-)
-
 _SITE_READY_JS = f"""() => {{
 {_VISIBLE_CHECK_JS}
 	const text = document.body?.innerText || '';
-	const blocked = {_WAF_BLOCKED_REGEX}.test(text);
+	const blocked = /请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human/i.test(text);
 	if (blocked) return false;
 	const wafBlockers = document.querySelector(
-		'iframe[src*="captcha"], iframe[src*="verify"], iframe[src*="slide"], .nc-container, #nocaptcha, [class*="slide"], [class*="slider"]'
+		'iframe[src*="captcha"], iframe[src*="verify"], iframe[src*="slide"], .nc-container, #nocaptcha'
 	);
 	if (wafBlockers) {{
 		const rect = wafBlockers.getBoundingClientRect?.();
@@ -186,7 +88,7 @@ _SITE_READY_JS = f"""() => {{
 _LOGIN_SHELL_READY_JS = f"""() => {{
 {_VISIBLE_CHECK_JS}
 	const text = document.body?.innerText || '';
-	const blocked = {_WAF_BLOCKED_REGEX}.test(text);
+	const blocked = /请进行验证|为了更好的访问体验|访问受限|Access denied|verify you are human/i.test(text);
 	if (blocked) return false;
 	return countVisible('.semi-card') > 0 || countVisible('#username') > 0 || countVisible('button') >= 2;
 }}"""
@@ -353,13 +255,10 @@ async def prepare_browser_page(page: Page) -> None:
 	await setup_popup_guard(page)
 
 
-async def wait_for_site_ready(
-	page: Page, timeout_ms: int = WAF_READY_TIMEOUT_MS, *, provider: str = '', account_name: str = ''
-) -> None:
+async def wait_for_site_ready(page: Page, timeout_ms: int = WAF_READY_TIMEOUT_MS) -> None:
 	"""等待 WAF 通过并关闭弹窗。"""
 	waf_timeout = min(timeout_ms, WAF_READY_TIMEOUT_MS)
 	await page.wait_for_load_state('domcontentloaded', timeout=waf_timeout)
-	await bypass_slide_waf(page, provider=provider, account_name=account_name)
 	try:
 		await page.wait_for_function(_SITE_READY_JS, timeout=waf_timeout)
 	except Exception:
@@ -367,103 +266,6 @@ async def wait_for_site_ready(
 	closed = await dismiss_popups(page)
 	if closed:
 		print(f'[INFO] Dismissed {closed} popup dialog(s)')
-
-
-SLIDE_DRAG_RETRIES = 5
-SLIDE_SETTLE_SECONDS = 2
-SLIDE_VERIFY_TIMEOUT_MS = 15_000
-
-
-async def _human_mouse_drag(page: Page, start_x: float, start_y: float, end_x: float, end_y: float) -> None:
-	steps = 30 + int(abs(end_x - start_x) / 8)
-	step_x = (end_x - start_x) / steps
-	step_y = (end_y - start_y) / steps
-	for i in range(steps + 1):
-		x = start_x + step_x * i
-		y = start_y + step_y * i + (1 - (i / steps) ** 2) * 3  # slight arc
-		await page.mouse.move(x, y)
-		await asyncio.sleep(0.008 + 0.005 * (1 if i == 0 or i == steps else 0.2))
-	await asyncio.sleep(0.1)
-
-
-async def bypass_slide_waf(page: Page, provider: str = '', account_name: str = '') -> bool:
-	is_slide = await page.evaluate(_WAF_SLIDE_DETECT_JS)
-	if not is_slide:
-		return False
-
-	print(f'[WAF] Slide verification detected, attempting to bypass...')
-
-	for attempt in range(SLIDE_DRAG_RETRIES):
-		handle_info = await page.evaluate(_FIND_SLIDER_HANDLE_JS)
-		if not handle_info:
-			print(f'[WAF] Cannot find slider handle (attempt {attempt + 1})')
-			await asyncio.sleep(1)
-			continue
-
-		hx, hy = handle_info['x'], handle_info['y']
-		hcx = hx + handle_info['width'] / 2
-		hcy = hy + handle_info['height'] / 2
-
-		track_width = handle_info['width']
-		for sel in _SLIDER_TRACK_SELECTORS:
-			escaped_sel = json.dumps(sel)
-			track_el = await page.evaluate(
-				f"""() => {{
-					const el = document.querySelector({escaped_sel});
-					if (!el) return null;
-					const r = el.getBoundingClientRect();
-					return {{x: r.x, y: r.y, width: r.width, height: r.height}};
-				}}"""
-			)
-			if track_el and track_el['width'] > handle_info['width'] * 1.5:
-				track_width = track_el['width']
-				break
-
-		drag_distance = track_width - handle_info['width']
-
-		if attempt < SLIDE_DRAG_RETRIES - 1:
-			drag_distance = drag_distance * (0.85 + 0.15 * (attempt % 2))
-		else:
-			drag_distance = track_width
-
-		end_x = hcx + drag_distance
-		end_y = hcy
-
-		print(f'[WAF] Dragging slider: {hcx:.0f},{hcy:.0f} -> {end_x:.0f},{end_y:.0f} (dist={drag_distance:.0f})')
-
-		await page.mouse.move(hcx, hcy)
-		await asyncio.sleep(0.2)
-		await page.mouse.down()
-		await asyncio.sleep(0.05)
-		await _human_mouse_drag(page, hcx, hcy, end_x, end_y)
-		await page.mouse.up()
-		await asyncio.sleep(SLIDE_SETTLE_SECONDS)
-
-		is_slide = await page.evaluate(_WAF_SLIDE_DETECT_JS)
-		if not is_slide:
-			print(f'[WAF] Slide verification bypassed successfully!')
-			return True
-
-		cookies = await page.context.cookies()
-		has_acw = any('acw_tc' == c.get('name') and c.get('value') for c in cookies)
-		if has_acw and '/login' in page.url.lower():
-			print(f'[WAF] acw_tc cookie present and navigated to login page')
-			return True
-
-		print(f'[WAF] Slide verification still present after attempt {attempt + 1}')
-		if attempt < SLIDE_DRAG_RETRIES - 1 and provider and account_name:
-			await save_login_screenshot(page, provider, account_name, f'slide-attempt-{attempt + 1}')
-
-	await page.reload(wait_until='domcontentloaded')
-	await asyncio.sleep(3)
-
-	is_slide = await page.evaluate(_WAF_SLIDE_DETECT_JS)
-	if not is_slide:
-		print(f'[WAF] Slide bypassed after reload!')
-		return True
-
-	print(f'[WAF] Failed to bypass slide verification after {SLIDE_DRAG_RETRIES} attempts')
-	return False
 
 
 async def _wait_for_optional_load_state(page: Page, state: str, timeout_ms: int) -> bool:
@@ -508,7 +310,6 @@ async def navigate_login_page(
 		print(f'[INFO] Warming up {base_url} before login')
 		await page.goto(base_url, wait_until='load', timeout=attempt_timeout)
 		await _settle_page(page, 3, 15_000)
-		await bypass_slide_waf(page, provider=provider, account_name=account_name)
 		closed = await dismiss_popups(page)
 		if closed:
 			print(f'[INFO] Dismissed {closed} popup dialog(s) during warmup')
@@ -520,10 +321,8 @@ async def navigate_login_page(
 		await page.goto(login_url, wait_until='load', timeout=attempt_timeout)
 		await _settle_page(page, 5, 20_000)
 
-		await bypass_slide_waf(page, provider=provider, account_name=account_name)
-
 		if await _wait_for_login_shell(page, attempt_timeout):
-			await wait_for_site_ready(page, timeout_ms, provider=provider, account_name=account_name)
+			await wait_for_site_ready(page, timeout_ms)
 			if await page.evaluate(_LOGIN_SHELL_READY_JS):
 				return
 
@@ -650,10 +449,8 @@ async def verify_browser_login(page: Page, console_url: str, timeout_ms: int) ->
 	return None
 
 
-async def wait_for_waf_ready(
-	page: Page, timeout_ms: int = WAF_READY_TIMEOUT_MS, *, provider: str = '', account_name: str = ''
-) -> None:
-	await wait_for_site_ready(page, timeout_ms, provider=provider, account_name=account_name)
+async def wait_for_waf_ready(page: Page, timeout_ms: int = WAF_READY_TIMEOUT_MS) -> None:
+	await wait_for_site_ready(page, timeout_ms)
 
 
 async def _first_visible_locator(page: Page, selectors: tuple[str, ...]) -> Locator | None:

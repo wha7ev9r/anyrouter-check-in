@@ -94,7 +94,6 @@ jobs:
         CHECKIN_HEADLESS: false
         CHECKIN_HUMANIZE: true
         CHECKIN_WAIT_TIMEOUT_MS: 120000
-        CHECKIN_PROXY_URL: ${{ secrets.CHECKIN_PROXY_URL }}
         ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
         PROVIDERS: ${{ secrets.PROVIDERS }}
         DINGDING_WEBHOOK: ${{ secrets.DINGDING_WEBHOOK }}

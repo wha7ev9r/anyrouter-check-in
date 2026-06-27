@@ -98,11 +98,11 @@ jobs:
           PROXY_REQUIRED: false
         run: |
           if [ "$PROXY_TYPE" = "v2ray" ]; then
-            echo "[INFO] PROXY_TYPE=v2ray — using xray"
+            echo "[INFO] PROXY_TYPE=v2ray — parsing v2ray subscription"
             uv run python scripts/setup_v2ray_proxy.py
           else
-            echo "[INFO] PROXY_TYPE=clash — using mihomo"
-            bash scripts/setup_mihomo_proxy.sh
+            echo "[INFO] PROXY_TYPE=clash — parsing Clash YAML subscription"
+            uv run python scripts/setup_clash_proxy.py
           fi
 
       - name: 执行签到

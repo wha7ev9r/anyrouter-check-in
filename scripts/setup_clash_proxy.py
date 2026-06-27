@@ -158,7 +158,6 @@ CLASH_TYPE_TO_PROTOCOL: dict[str, str] = {
 	'vless': 'vless',
 	'ss': 'shadowsocks',
 	'trojan': 'trojan',
-	'socks5': 'socks',
 }
 
 

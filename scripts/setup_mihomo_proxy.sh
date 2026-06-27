@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # 通过 mihomo 拉取订阅、启动本地代理并探测可用节点。
 # 环境变量:
-#   PROXY_SUBSCRIPTION_URL  订阅链接（必填才启用）
-#   PROXY_TEST_URL          探测目标，默认 https://www.google.com/generate_204
-#   PROXY_REQUIRED          true 时探测失败则退出 1
-#   PROXY_PORT              本地 mixed-port，默认 7890
+#   CLASH_SUBSCRIPTION_URL   订阅链接（优先，与 V2RAY_SUBSCRIPTION_URL 分开）
+#   PROXY_SUBSCRIPTION_URL   订阅链接（向后兼容，CLASH_SUBSCRIPTION_URL 未设置时 fallback）
+#   PROXY_TEST_URL           探测目标，默认 https://agentrouter.org
+#   PROXY_REQUIRED           true 时探测失败则退出 1
+#   PROXY_PORT               本地 mixed-port，默认 7890
 
 set -euo pipefail
 
-if [[ -z "${PROXY_SUBSCRIPTION_URL:-}" ]]; then
-	echo "[INFO] PROXY_SUBSCRIPTION_URL not set, skip proxy setup"
+CLASH_SUBSCRIPTION_URL="${CLASH_SUBSCRIPTION_URL:-${PROXY_SUBSCRIPTION_URL:-}}"
+if [[ -z "${CLASH_SUBSCRIPTION_URL}" ]]; then
+	echo "[INFO] CLASH_SUBSCRIPTION_URL not set, skip proxy setup"
 	exit 0
 fi
 
 PROXY_DIR="${RUNNER_TEMP:-/tmp}/checkin-proxy"
 PROXY_PORT="${PROXY_PORT:-7890}"
-PROXY_TEST_URL="${PROXY_TEST_URL:-https://www.google.com/generate_204}"
-MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
+PROXY_TEST_URL="${PROXY_TEST_URL:-https://agentrouter.org}"
+MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.27}"
 PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
 
 mkdir -p "${PROXY_DIR}"
@@ -47,7 +49,7 @@ unified-delay: true
 proxy-providers:
   subscription:
     type: http
-    url: "${PROXY_SUBSCRIPTION_URL}"
+    url: "${CLASH_SUBSCRIPTION_URL}"
     interval: 3600
     path: ./subscription.yaml
     health-check:

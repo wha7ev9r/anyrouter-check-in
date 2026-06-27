@@ -290,13 +290,14 @@
 在仓库 Settings -> Environments -> production 中添加：
 
 - **Secret** `V2RAY_SUBSCRIPTION_URL`：标准 Base64 v2ray 订阅链接（返回 `vmess://` / `vless://` / `ss://` 等 URI）
-- **Environment variable** `PROXY_TYPE`：设为 `v2ray`
 
-脚本会自动尝试所有节点，逐个测试到 `https://agentrouter.org` 的连通性，自动跳过触发 WAF 的节点，直到找到一个可用节点。
+> 配置 `V2RAY_SUBSCRIPTION_URL` 后会自动切换到 v2ray 模式，无需手动设置 `PROXY_TYPE`。
+
+脚本会自动并行测试所有节点（默认 200 路并发）到 `https://agentrouter.org` 的连通性，自动跳过触发 WAF 的节点，找到第一个可用节点即停止。
 
 ### 全局配置
 
-在 Environment variables 中设置 `PROXY_TYPE` 选择代理类型：
+在 Environment variables 中设置 `PROXY_TYPE` 选择代理类型（配置 `V2RAY_SUBSCRIPTION_URL` 后会自动切到 v2ray，无需手动设置）：
 
 | 值              | 说明                            | 默认端口 |
 | --------------- | ------------------------------- | -------- |
@@ -310,7 +311,7 @@ CHECKIN_PROXY_URL=http://127.0.0.1:7890
 PROVIDERS={"agentrouter":{"use_proxy":true}}
 ```
 
-如果使用订阅脚本，默认会用 `https://agentrouter.org` 测试代理连通性（v2ray 模式会额外检测 WAF 滑块）；也可以通过 `PROXY_TEST_URL` 覆盖。
+v2ray 模式会以 200 路并发并行测试所有节点，默认用 `https://agentrouter.org` 测试连通性并检测 WAF 滑块；也可以通过 `PROXY_TEST_URL` 覆盖。
 
 ## 开启通知
 

@@ -90,7 +90,7 @@ jobs:
 
       - name: 配置代理
         env:
-          PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || vars.PROXY_TYPE || (secrets.V2RAY_SUBSCRIPTION_URL != '' && 'v2ray') || 'clash' }}
+          PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || (secrets.V2RAY_SUBSCRIPTION_URL != '' && 'v2ray') || 'clash' }}
           CLASH_SUBSCRIPTION_URL: ${{ secrets.CLASH_SUBSCRIPTION_URL || secrets.PROXY_SUBSCRIPTION_URL }}
           V2RAY_SUBSCRIPTION_URL: ${{ secrets.V2RAY_SUBSCRIPTION_URL }}
           PROXY_TEST_URL: https://agentrouter.org
@@ -149,7 +149,7 @@ jobs:
       - name: 停止代理
         if: always()
         env:
-          PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || vars.PROXY_TYPE || (secrets.V2RAY_SUBSCRIPTION_URL != '' && 'v2ray') || 'clash' }}
+          PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || (secrets.V2RAY_SUBSCRIPTION_URL != '' && 'v2ray') || 'clash' }}
         run: |
           if [ "$PROXY_TYPE" = "v2ray" ]; then
             bash scripts/stop_v2ray_proxy.sh

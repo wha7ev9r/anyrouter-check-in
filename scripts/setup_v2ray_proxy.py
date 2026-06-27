@@ -15,10 +15,13 @@ Environment variables:
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -512,6 +515,77 @@ def node_display_name(node: dict) -> str:
 	return str(node.get('ps') or node.get('add', 'unknown'))
 
 
+MAX_WORKERS = 200
+
+
+class PortPool:
+	def __init__(self, start: int, count: int):
+		self._queue: queue.Queue[int] = queue.Queue()
+		for i in range(count):
+			self._queue.put(start + i)
+
+	def acquire(self) -> int:
+		return self._queue.get()
+
+	def release(self, port: int) -> None:
+		self._queue.put(port)
+
+
+def probe_node_worker(
+	node: dict,
+	xray_bin: Path,
+	proxy_dir: Path,
+	test_url: str,
+	port_pool: PortPool,
+	stop_event: threading.Event,
+	idx: int,
+	total: int,
+) -> tuple[bool, bool, str, int, subprocess.Popen | None]:
+	name = node_display_name(node)
+	proto = node.get('protocol', 'vmess')
+
+	if stop_event.is_set():
+		return False, False, name, 0, None
+
+	log(f'[PROCESSING] Node {idx}/{total}: {name} ({proto})')
+
+	port = port_pool.acquire()
+	proc: subprocess.Popen | None = None
+	try:
+		config = build_xray_config(node, port)
+		config_path = proxy_dir / f'config_{port}.json'
+		with open(config_path, 'w') as f:
+			json.dump(config, f, indent=2)
+
+		proc = start_xray(xray_bin, config_path, proxy_dir)
+		time.sleep(2)
+
+		if proc.poll() is not None:
+			return False, False, name, port, None
+
+		reachable, waf = check_proxy(port, test_url)
+
+		if waf:
+			log(f'[WARN] Node "{name}" triggered WAF')
+		if not reachable and not waf:
+			log(f'[WARN] Node "{name}" unreachable')
+
+		if waf or not reachable:
+			proc.terminate()
+			try:
+				proc.wait(timeout=3)
+			except subprocess.TimeoutExpired:
+				proc.kill()
+				proc.wait()
+			return reachable, waf, name, port, None
+
+		# Success — keep xray running
+		return reachable, waf, name, port, proc
+	finally:
+		if proc is None or proc.poll() is not None:
+			port_pool.release(port)
+
+
 def main() -> None:
 	subscription_url = os.environ.get('V2RAY_SUBSCRIPTION_URL', '').strip()
 	xray_version = os.environ.get('XRAY_VERSION', DEFAULT_XRAY_VERSION).strip()
@@ -541,60 +615,68 @@ def main() -> None:
 		log('[FAILED] No valid nodes found in subscription')
 		sys.exit(1 if proxy_required else 0)
 
-	log(f'[INFO] Testing {len(nodes)} node(s) against {test_url}')
+	log(f'[INFO] Testing {len(nodes)} node(s) against {test_url} (max {MAX_WORKERS} concurrent)')
 
-	for i, node in enumerate(nodes):
-		name = node_display_name(node)
-		proto = node.get('protocol', 'vmess')
-		log(f'[PROCESSING] Node {i + 1}/{len(nodes)}: {name} ({proto})')
+	port_pool = PortPool(proxy_port, MAX_WORKERS)
+	stop_event = threading.Event()
+	found_node: tuple[int, subprocess.Popen, str] | None = None
 
-		config = build_xray_config(node, proxy_port)
-		config_path = proxy_dir / 'config.json'
-		with open(config_path, 'w') as f:
-			json.dump(config, f, indent=2)
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+	try:
+		fut_map: dict[concurrent.futures.Future, dict] = {}
+		for i, node in enumerate(nodes):
+			fut = executor.submit(
+				probe_node_worker,
+				node,
+				xray_bin,
+				proxy_dir,
+				test_url,
+				port_pool,
+				stop_event,
+				i + 1,
+				len(nodes),
+			)
+			fut_map[fut] = node
 
-		proc = start_xray(xray_bin, config_path, proxy_dir)
-		time.sleep(3)
+		for fut in concurrent.futures.as_completed(fut_map):
+			if stop_event.is_set():
+				break
 
-		if proc.poll() is not None:
-			log(f'[FAILED] xray exited immediately for node {name}')
-			continue
+			try:
+				reachable, waf, name, port, proc = fut.result()
+			except Exception:
+				continue
+			if reachable and not waf and proc is not None:
+				stop_event.set()
+				found_node = (port, proc, name)
+				for ff in fut_map:
+					ff.cancel()
+				break
+	finally:
+		executor.shutdown(wait=False)
 
-		reachable, waf = check_proxy(proxy_port, test_url)
+	if found_node is None:
+		log('[FAILED] All nodes failed or triggered WAF')
+		sys.exit(1 if proxy_required else 0)
 
-		if reachable and not waf:
-			pid_path = proxy_dir / 'xray.pid'
-			with open(pid_path, 'w') as f:
-				f.write(str(proc.pid))
+	port, proc, name = found_node
+	pid_path = proxy_dir / 'xray.pid'
+	with open(pid_path, 'w') as fh:
+		fh.write(str(proc.pid))
 
-			proxy_url = f'socks5://127.0.0.1:{proxy_port}'
-			log(f'[SUCCESS] AgentRouter reachable without WAF via node: {name}')
-			log(f'[SUCCESS] Proxy is ready: {proxy_url}')
+	proxy_url = f'socks5://127.0.0.1:{port}'
+	log(f'[SUCCESS] AgentRouter reachable without WAF via node: {name}')
+	log(f'[SUCCESS] Proxy is ready: {proxy_url}')
 
-			if github_env:
-				try:
-					with open(github_env, 'a') as f:
-						f.write(f'CHECKIN_PROXY_URL={proxy_url}\n')
-					log(f'[INFO] CHECKIN_PROXY_URL written to {github_env}')
-				except Exception as e:
-					log(f'[WARN] Failed to write CHECKIN_PROXY_URL: {e}')
-
-			sys.exit(0)
-
-		proc.terminate()
+	if github_env:
 		try:
-			proc.wait(timeout=5)
-		except subprocess.TimeoutExpired:
-			proc.kill()
-			proc.wait()
+			with open(github_env, 'a') as fh:
+				fh.write(f'CHECKIN_PROXY_URL={proxy_url}\n')
+			log(f'[INFO] CHECKIN_PROXY_URL written to {github_env}')
+		except Exception as e:
+			log(f'[WARN] Failed to write CHECKIN_PROXY_URL: {e}')
 
-		if waf:
-			log(f'[WARN] Node "{name}" triggered WAF, trying next...')
-		else:
-			log(f'[WARN] Node "{name}" unreachable, trying next...')
-
-	log('[FAILED] All nodes failed or triggered WAF')
-	sys.exit(1 if proxy_required else 0)
+	os._exit(0)
 
 
 if __name__ == '__main__':

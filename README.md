@@ -274,44 +274,41 @@
 
 内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以在 GitHub Actions 中配置自动代理。
 
-### 方式一：Clash / Mihomo（默认）
+系统自动根据你配置的订阅链接 Secret 选择代理方式，**无需手动设置 `PROXY_TYPE`**。
 
-使用 `scripts/setup_mihomo_proxy.sh`，从 Clash 订阅链接下载配置并启动本地代理。
+### 方式一：Clash / Mihomo YAML 订阅（默认）
 
 在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
-- `CLASH_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接（兼容旧的 `PROXY_SUBSCRIPTION_URL`）
-- 然后在 Environment variables 中添加变量 `PROXY_TYPE`，值为 `clash`（默认值，不设置也行）
+- **Secret** `CLASH_SUBSCRIPTION_URL`：Clash/Mihomo YAML 订阅链接（兼容旧的 `PROXY_SUBSCRIPTION_URL`）
 
-### 方式二：v2ray / Xray（替代选项）
+脚本会解析 YAML 中的 `proxies:` 列表，以 200 路并发并行测试每个节点到 `https://agentrouter.org` 的连通性并检测 WAF 滑块，自动跳过触发 WAF 的节点，找到第一个可用节点即启动。
 
-使用 `scripts/setup_v2ray_proxy.py`，从标准 Base64 v2ray 订阅链接解析节点并启动代理。
+### 方式二：v2ray / Xray Base64 订阅
 
-在仓库 Settings -> Environments -> production 中添加：
+在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
-- **Secret** `V2RAY_SUBSCRIPTION_URL`：标准 Base64 v2ray 订阅链接（返回 `vmess://` / `vless://` / `ss://` 等 URI）
+- **Secret** `V2RAY_SUBSCRIPTION_URL`：标准 Base64 v2ray 订阅链接（返回 `vmess://` / `vless://` / `ss://` / `trojan://` 等 URI）
 
-> 配置 `V2RAY_SUBSCRIPTION_URL` 后会自动切换到 v2ray 模式，无需手动设置 `PROXY_TYPE`。
+与 Clash 方式相同，200 路并发测试 + WAF 检测，无需额外配置。
 
-脚本会自动并行测试所有节点（默认 200 路并发）到 `https://agentrouter.org` 的连通性，自动跳过触发 WAF 的节点，找到第一个可用节点即停止。
+### 端口说明
 
-### 全局配置
+两种方式都用 xray-core 测试节点并启动 SOCKS5 代理，端口：
 
-在 Environment variables 中设置 `PROXY_TYPE` 选择代理类型（配置 `V2RAY_SUBSCRIPTION_URL` 后会自动切到 v2ray，无需手动设置）：
+| 方式       | 默认端口 | 说明                           |
+| ---------- | -------- | ------------------------------ |
+| Clash 订阅 | 7890     | 解析 YAML 后走 xray 测试       |
+| v2ray 订阅 | 7891     | 解析 Base64 URI 后走 xray 测试 |
 
-| 值              | 说明                            | 默认端口 |
-| --------------- | ------------------------------- | -------- |
-| `clash`（默认） | 使用 mihomo 启动 Clash 代理     | 7890     |
-| `v2ray`         | 使用 xray-core 启动 SOCKS5 代理 | 7891     |
-
-本地运行时也可以直接使用已有代理：
+### 本地运行时
 
 ```bash
 CHECKIN_PROXY_URL=http://127.0.0.1:7890
 PROVIDERS={"agentrouter":{"use_proxy":true}}
 ```
 
-v2ray 模式会以 200 路并发并行测试所有节点，默认用 `https://agentrouter.org` 测试连通性并检测 WAF 滑块；也可以通过 `PROXY_TEST_URL` 覆盖。
+两种模式都通过 `PROXY_TEST_URL`（默认 `https://agentrouter.org`）测试连通性与 WAF 滑块。
 
 ## 开启通知
 

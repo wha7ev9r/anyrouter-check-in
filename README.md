@@ -272,11 +272,36 @@
 
 ## 代理配置（可选）
 
-内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以在 GitHub Actions 中配置 mihomo 订阅代理。
+内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以在 GitHub Actions 中配置自动代理。
+
+### 方式一：Clash / Mihomo（默认）
+
+使用 `scripts/setup_mihomo_proxy.sh`，从 Clash 订阅链接下载配置并启动本地代理。
 
 在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
-- `PROXY_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接。设置后，workflow 会运行 `scripts/setup_mihomo_proxy.sh`，启动本地代理并写入 `CHECKIN_PROXY_URL`。
+- `CLASH_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接（兼容旧的 `PROXY_SUBSCRIPTION_URL`）
+- 然后在 Environment variables 中添加变量 `PROXY_TYPE`，值为 `clash`（默认值，不设置也行）
+
+### 方式二：v2ray / Xray（替代选项）
+
+使用 `scripts/setup_v2ray_proxy.py`，从标准 Base64 v2ray 订阅链接解析节点并启动代理。
+
+在仓库 Settings -> Environments -> production 中添加：
+
+- **Secret** `V2RAY_SUBSCRIPTION_URL`：标准 Base64 v2ray 订阅链接（返回 `vmess://` / `vless://` / `ss://` 等 URI）
+- **Environment variable** `PROXY_TYPE`：设为 `v2ray`
+
+脚本会自动尝试所有节点，逐个测试到 `https://agentrouter.org` 的连通性，自动跳过触发 WAF 的节点，直到找到一个可用节点。
+
+### 全局配置
+
+在 Environment variables 中设置 `PROXY_TYPE` 选择代理类型：
+
+| 值              | 说明                            | 默认端口 |
+| --------------- | ------------------------------- | -------- |
+| `clash`（默认） | 使用 mihomo 启动 Clash 代理     | 7890     |
+| `v2ray`         | 使用 xray-core 启动 SOCKS5 代理 | 7891     |
 
 本地运行时也可以直接使用已有代理：
 
@@ -285,7 +310,7 @@ CHECKIN_PROXY_URL=http://127.0.0.1:7890
 PROVIDERS={"agentrouter":{"use_proxy":true}}
 ```
 
-如果使用订阅脚本，默认会用 `https://www.google.com/generate_204` 测试代理连通性；也可以通过 `PROXY_TEST_URL` 覆盖。
+如果使用订阅脚本，默认会用 `https://agentrouter.org` 测试代理连通性（v2ray 模式会额外检测 WAF 滑块）；也可以通过 `PROXY_TEST_URL` 覆盖。
 
 ## 开启通知
 

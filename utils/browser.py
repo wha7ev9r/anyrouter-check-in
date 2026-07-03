@@ -54,6 +54,7 @@ EMAIL_TAB_TIMEOUT_MS = 8_000
 WAF_READY_TIMEOUT_MS = 30_000
 SESSION_WAIT_TIMEOUT_MS = 45_000
 RATE_LIMIT_BACKOFF_SECONDS = (30, 60, 90)
+RATE_LIMIT_HTTP_STATUSES = frozenset({429, 403, 503})
 _RATE_LIMIT_RE = re.compile(r'请求次数过多|请稍后再试|访问过于频繁|too many requests|rate limit', re.I)
 
 _VISIBLE_CHECK_JS = """
@@ -371,8 +372,8 @@ async def navigate_login_page(
 				print(f'[INFO] Dismissed {closed} popup dialog(s) during warmup')
 		except Exception as exc:
 			print(f'[WARN] Warmup navigation failed: {exc}')
-			if last_status['code'] == 429:
-				await _rate_limit_backoff(account_name, 'HTTP 429', 0)
+			if last_status['code'] in RATE_LIMIT_HTTP_STATUSES:
+				await _rate_limit_backoff(account_name, f'HTTP {last_status["code"]}', 0)
 
 		for attempt in range(3):
 			last_status['code'] = None
@@ -381,12 +382,19 @@ async def navigate_login_page(
 				await page.goto(login_url, wait_until='load', timeout=attempt_timeout)
 			except Exception as exc:
 				print(f'[WARN] Login page navigation failed: {exc}')
-				if last_status['code'] == 429 and attempt < 2:
-					await _rate_limit_backoff(account_name, 'HTTP 429', attempt)
+				if last_status['code'] in RATE_LIMIT_HTTP_STATUSES and attempt < 2:
+					await _rate_limit_backoff(account_name, f'HTTP {last_status["code"]}', attempt)
 					continue
 				if attempt < 2:
 					await asyncio.sleep(5)
 				continue
+
+			if last_status['code'] in RATE_LIMIT_HTTP_STATUSES:
+				print(f'[WARN] {account_name}: Document returned HTTP {last_status["code"]}')
+				if attempt < 2:
+					await _rate_limit_backoff(account_name, f'HTTP {last_status["code"]}', attempt)
+					continue
+				break
 
 			await _settle_page(page, 5, 20_000)
 
@@ -657,6 +665,11 @@ async def _log_login_page_state(page: Page) -> None:
 		}"""
 	)
 	debug_print(f'[INFO] Login page state: {state}')
+	if not is_debug_enabled():
+		title = state.get('title', '') if isinstance(state, dict) else ''
+		snippet = state.get('bodySnippet', '') if isinstance(state, dict) else ''
+		print(f'[INFO] Page title: {title}')
+		print(f'[INFO] Body snippet: {snippet[:200]}')
 
 
 async def _open_email_login_form(

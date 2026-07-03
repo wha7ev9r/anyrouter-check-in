@@ -382,26 +382,36 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 	if account.has_login_credentials():
 		print(f'[INFO] {account_name}: Attempting email/password login (priority)...')
 		assert account.email is not None and account.password is not None
-		login_result = await login_with_credentials(
-			account_name,
-			provider_config,
-			account.provider,
-			account.email,
-			account.password,
-		)
-		if login_result:
-			all_cookies = login_result.cookies
-			resolved_api_user = login_result.api_user
-			auth_method = 'email/password'
+		max_login_attempts = 2
+		for login_attempt in range(max_login_attempts):
+			login_result = await login_with_credentials(
+				account_name,
+				provider_config,
+				account.provider,
+				account.email,
+				account.password,
+			)
+			if login_result:
+				all_cookies = login_result.cookies
+				resolved_api_user = login_result.api_user
+				auth_method = 'email/password'
 
-			if not provider_config.needs_manual_check_in():
-				user_info = login_result.user_info
-				if user_info and user_info.get('success'):
-					print(f'[INFO] {account_name}: Check-in completed during browser login')
-					print(user_info['display'])
-					return True, None, user_info
-				return False, None, None
-		else:
+				if not provider_config.needs_manual_check_in():
+					user_info = login_result.user_info
+					if user_info and user_info.get('success'):
+						print(f'[INFO] {account_name}: Check-in completed during browser login')
+						print(user_info['display'])
+						return True, None, user_info
+					return False, None, None
+				break
+			if login_attempt < max_login_attempts - 1:
+				backoff = 60
+				print(
+					f'[WARN] {account_name}: Email/password login failed, '
+					f'retrying in {backoff}s (attempt {login_attempt + 1}/{max_login_attempts})'
+				)
+				await asyncio.sleep(backoff)
+				continue
 			print(f'[FAILED] {account_name}: Email/password login failed, will not use stale session cookies')
 			return False, None, None
 	else:

@@ -53,6 +53,8 @@ FORM_ACTION_TIMEOUT_MS = 15_000
 EMAIL_TAB_TIMEOUT_MS = 8_000
 WAF_READY_TIMEOUT_MS = 30_000
 SESSION_WAIT_TIMEOUT_MS = 45_000
+RATE_LIMIT_BACKOFF_SECONDS = (30, 60, 90)
+_RATE_LIMIT_RE = re.compile(r'请求次数过多|请稍后再试|访问过于频繁|too many requests|rate limit', re.I)
 
 _VISIBLE_CHECK_JS = """
 	const isVisible = (el) => {
@@ -319,6 +321,23 @@ async def _wait_for_login_shell(page: Page, timeout_ms: int) -> bool:
 		return False
 
 
+async def _detect_rate_limit(page: Page) -> bool:
+	"""检测页面是否被限流（429 文案）。"""
+	try:
+		text = await page.evaluate('() => (document.body?.innerText || "")')
+	except Exception:  # nosec B110
+		return False
+	return bool(_RATE_LIMIT_RE.search(text))
+
+
+async def _rate_limit_backoff(account_name: str, reason: str, step: int) -> None:
+	"""命中限流时按递增退避等待。"""
+	idx = min(step, len(RATE_LIMIT_BACKOFF_SECONDS) - 1)
+	delay = RATE_LIMIT_BACKOFF_SECONDS[idx]
+	print(f'[WARN] {account_name}: Rate limited ({reason}), backing off {delay}s before retry')
+	await asyncio.sleep(delay)
+
+
 async def navigate_login_page(
 	page: Page,
 	login_url: str,
@@ -327,45 +346,75 @@ async def navigate_login_page(
 	provider: str = '',
 	account_name: str = '',
 ) -> None:
-	"""预热站点、导航登录页并等待 SPA 渲染完成。"""
+	"""预热站点、导航登录页并等待 SPA 渲染完成。命中限流时递增退避。"""
 	from urllib.parse import urlparse
 
 	parsed = urlparse(login_url)
 	base_url = f'{parsed.scheme}://{parsed.netloc}/'
 	attempt_timeout = min(timeout_ms, 60_000)
 
+	last_status: dict[str, int | None] = {'code': None}
+	scope_prefix = f'{parsed.scheme}://{parsed.netloc}'
+
+	def _on_response(response) -> None:
+		if response.url.startswith(scope_prefix) and response.request.resource_type == 'document':
+			last_status['code'] = response.status
+
+	page.on('response', _on_response)
 	try:
-		print(f'[INFO] Warming up {base_url} before login')
-		await page.goto(base_url, wait_until='load', timeout=attempt_timeout)
-		await _settle_page(page, 3, 15_000)
-		closed = await dismiss_popups(page)
-		if closed:
-			print(f'[INFO] Dismissed {closed} popup dialog(s) during warmup')
-	except Exception as exc:
-		print(f'[WARN] Warmup navigation failed: {exc}')
+		try:
+			print(f'[INFO] Warming up {base_url} before login')
+			await page.goto(base_url, wait_until='load', timeout=attempt_timeout)
+			await _settle_page(page, 3, 15_000)
+			closed = await dismiss_popups(page)
+			if closed:
+				print(f'[INFO] Dismissed {closed} popup dialog(s) during warmup')
+		except Exception as exc:
+			print(f'[WARN] Warmup navigation failed: {exc}')
+			if last_status['code'] == 429:
+				await _rate_limit_backoff(account_name, 'HTTP 429', 0)
 
-	for attempt in range(3):
-		print(f'[INFO] Navigating login page (attempt {attempt + 1}/3): {login_url}')
-		await page.goto(login_url, wait_until='load', timeout=attempt_timeout)
-		await _settle_page(page, 5, 20_000)
-
-		if await _wait_for_login_shell(page, attempt_timeout):
-			await wait_for_site_ready(page, timeout_ms)
-			if await page.evaluate(_LOGIN_SHELL_READY_JS):
-				return
-
-		print(f'[WARN] Login page shell not ready on attempt {attempt + 1}')
-		await _log_login_page_state(page)
-		if provider and account_name:
-			await save_login_screenshot(page, provider, account_name, f'login-shell-attempt-{attempt + 1}')
-		if attempt < 2:
-			await asyncio.sleep(5)
+		for attempt in range(3):
+			last_status['code'] = None
+			print(f'[INFO] Navigating login page (attempt {attempt + 1}/3): {login_url}')
 			try:
-				await page.reload(wait_until='load', timeout=attempt_timeout)
-			except Exception:  # nosec B110
-				pass
+				await page.goto(login_url, wait_until='load', timeout=attempt_timeout)
+			except Exception as exc:
+				print(f'[WARN] Login page navigation failed: {exc}')
+				if last_status['code'] == 429 and attempt < 2:
+					await _rate_limit_backoff(account_name, 'HTTP 429', attempt)
+					continue
+				if attempt < 2:
+					await asyncio.sleep(5)
+				continue
 
-	raise TimeoutError(f'Login page never rendered: {login_url}')
+			await _settle_page(page, 5, 20_000)
+
+			if await _wait_for_login_shell(page, attempt_timeout):
+				await wait_for_site_ready(page, timeout_ms)
+				if await page.evaluate(_LOGIN_SHELL_READY_JS):
+					return
+
+			if await _detect_rate_limit(page):
+				if attempt < 2:
+					await _rate_limit_backoff(account_name, '页面限流提示', attempt)
+					continue
+				break
+
+			print(f'[WARN] Login page shell not ready on attempt {attempt + 1}')
+			await _log_login_page_state(page)
+			if provider and account_name:
+				await save_login_screenshot(page, provider, account_name, f'login-shell-attempt-{attempt + 1}')
+			if attempt < 2:
+				await asyncio.sleep(5)
+				try:
+					await page.reload(wait_until='load', timeout=attempt_timeout)
+				except Exception:  # nosec B110
+					pass
+
+		raise TimeoutError(f'Login page never rendered: {login_url}')
+	finally:
+		page.remove_listener('response', _on_response)
 
 
 async def has_session_cookie(page: Page) -> bool:

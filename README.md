@@ -272,17 +272,25 @@
 
 ## 代理配置（可选）
 
-内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以在 GitHub Actions 中配置自动代理。
+内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以配置代理。**无需手动设置 `PROXY_TYPE`**，系统按以下优先级自动选择：
 
-系统自动根据你配置的订阅链接 Secret 选择代理方式，**无需手动设置 `PROXY_TYPE`**。
+1. 配置了 `V2RAY_SUBSCRIPTION_URL` → v2ray 模式
+2. 配置了 `CLASH_SUBSCRIPTION_URL`（或 `PROXY_SUBSCRIPTION_URL`）→ clash 模式
+3. 都没配置 → **自动从 [free-nodes/v2rayfree](https://github.com/free-nodes/v2rayfree) 拉取最新公开免费节点**（默认行为，零配置）
 
-### 方式一：Clash / Mihomo YAML 订阅（默认）
+### 方式零：零配置自动获取免费节点（默认，推荐）
+
+**什么都不用配。** 只要没有设置任何订阅链接 Secret，CI 会自动执行 `scripts/fetch_latest_free_nodes.py` 从 `free-nodes/v2rayfree` 仓库获取最新的 `vYYYYMMDD*` 订阅文件，再由 `setup_v2ray_proxy.py` 解析、测试、选节点。
+
+> 适合不想维护订阅链接的用户。公开免费节点稳定性一般（部分节点可能失效或被 WAF 拦截），若签到失败可改用下方自定义订阅。每次运行都会重新拉取最新节点，无需手动更新链接。
+
+### 方式一：Clash / Mihomo YAML 订阅
 
 在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
 - **Secret** `CLASH_SUBSCRIPTION_URL`：Clash/Mihomo YAML 订阅链接（兼容旧的 `PROXY_SUBSCRIPTION_URL`）
 
-脚本会解析 YAML 中的 `proxies:` 列表，以 200 路并发并行测试每个节点到 `https://agentrouter.org` 的连通性并检测 WAF 滑块，自动跳过触发 WAF 的节点，找到第一个可用节点即启动。
+脚本会解析 YAML 中的 `proxies:` 列表，以 30 路并发并行测试每个节点到 `https://agentrouter.org` 的连通性并检测 WAF 滑块，自动跳过触发 WAF 的节点，找到第一个可用节点即启动。
 
 ### 方式二：v2ray / Xray Base64 订阅
 
@@ -290,7 +298,7 @@
 
 - **Secret** `V2RAY_SUBSCRIPTION_URL`：标准 Base64 v2ray 订阅链接（返回 `vmess://` / `vless://` / `ss://` / `trojan://` 等 URI）
 
-与 Clash 方式相同，200 路并发测试 + WAF 检测，无需额外配置。
+与 Clash 方式相同，30 路并发测试 + WAF 检测，无需额外配置。
 
 ### 端口说明
 
@@ -303,9 +311,20 @@
 
 ### 本地运行时
 
+如果你已经有现成的 SOCKS5 代理，直接设置环境变量即可：
+
 ```bash
 CHECKIN_PROXY_URL=http://127.0.0.1:7890
 PROVIDERS={"agentrouter":{"use_proxy":true}}
+```
+
+如果你想像 CI 一样自动拉取免费节点并测速选节点，先运行：
+
+```bash
+# 从 free-nodes/v2rayfree 获取最新订阅，启动 xray 并测速选可用节点
+export V2RAY_SUBSCRIPTION_URL=$(uv run python scripts/fetch_latest_free_nodes.py)
+uv run python scripts/setup_v2ray_proxy.py
+# 终端会输出 CHECKIN_PROXY_URL=socks5://127.0.0.1:7891，记下后运行签到
 ```
 
 两种模式都通过 `PROXY_TEST_URL`（默认 `https://agentrouter.org`）测试连通性与 WAF 滑块。
@@ -390,10 +409,13 @@ uv run python -m cloakbrowser install
 # 示例：
 # ANYROUTER_ACCOUNTS=[{"name":"账号1","email":"your@email.com","password":"your_password"}]
 # PROVIDERS={"agentrouter":{"domain":"https://agentrouter.org"}}
-# PROXY_SUBSCRIPTION_URL=https://example.com/sub?token=xxx
+# 代理留空即自动从 free-nodes/v2rayfree 拉取最新免费节点；也可指定：
+# V2RAY_SUBSCRIPTION_URL=https://example.com/sub
+# CLASH_SUBSCRIPTION_URL=https://example.com/clash.yaml
+# 或直接使用已有的本地代理：
 # CHECKIN_PROXY_URL=http://127.0.0.1:7890
 
-# 运行签到脚本
+# 运行签到脚本（未设 CHECKIN_PROXY_URL 时会自动拉取免费节点）
 uv run checkin.py
 ```
 

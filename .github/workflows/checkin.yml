@@ -88,21 +88,50 @@ jobs:
           restore-keys: |
             browser-profiles-${{ runner.os }}-
 
+      - name: 获取最新免费节点订阅（无自定义订阅时）
+        env:
+          HAS_CUSTOM_SUB: ${{
+            secrets.V2RAY_SUBSCRIPTION_URL != '' ||
+            secrets.CLASH_SUBSCRIPTION_URL != '' ||
+            secrets.PROXY_SUBSCRIPTION_URL != ''
+          }}
+        if: env.HAS_CUSTOM_SUB == 'false'
+        run: |
+          echo "V2RAY_SUBSCRIPTION_URL=$(uv run python scripts/fetch_latest_free_nodes.py)" >> $GITHUB_ENV
+
       - name: 配置代理
         env:
-          PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || (secrets.V2RAY_SUBSCRIPTION_URL != '' && 'v2ray') || 'clash' }}
           CLASH_SUBSCRIPTION_URL: ${{ secrets.CLASH_SUBSCRIPTION_URL || secrets.PROXY_SUBSCRIPTION_URL }}
-          V2RAY_SUBSCRIPTION_URL: ${{ secrets.V2RAY_SUBSCRIPTION_URL }}
           PROXY_TEST_URL: https://agentrouter.org
           XRAY_VERSION: v1.8.24
           PROXY_REQUIRED: false
+          MANUAL_PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || '' }}
         run: |
-          if [ "$PROXY_TYPE" = "v2ray" ]; then
+          if [ -n "$MANUAL_PROXY_TYPE" ]; then
+            echo "[INFO] Using manually specified proxy type: $MANUAL_PROXY_TYPE"
+            if [ "$MANUAL_PROXY_TYPE" = "v2ray" ]; then
+              export V2RAY_SUBSCRIPTION_URL="${{ secrets.V2RAY_SUBSCRIPTION_URL }}"
+              uv run python scripts/setup_v2ray_proxy.py
+            else
+              uv run python scripts/setup_clash_proxy.py
+            fi
+            exit $?
+          fi
+
+          V2RAY_URL="${{ secrets.V2RAY_SUBSCRIPTION_URL }}"
+          if [ -z "$V2RAY_URL" ]; then
+            V2RAY_URL="${V2RAY_SUBSCRIPTION_URL}"
+          fi
+
+          if [ -n "$V2RAY_URL" ]; then
+            export V2RAY_SUBSCRIPTION_URL="$V2RAY_URL"
             echo "[INFO] PROXY_TYPE=v2ray — parsing v2ray subscription"
             uv run python scripts/setup_v2ray_proxy.py
-          else
+          elif [ -n "$CLASH_SUBSCRIPTION_URL" ]; then
             echo "[INFO] PROXY_TYPE=clash — parsing Clash YAML subscription"
             uv run python scripts/setup_clash_proxy.py
+          else
+            echo "[INFO] No subscription URL configured, skipping proxy"
           fi
 
       - name: 执行签到
@@ -149,12 +178,26 @@ jobs:
       - name: 停止代理
         if: always()
         env:
-          PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || (secrets.V2RAY_SUBSCRIPTION_URL != '' && 'v2ray') || 'clash' }}
+          MANUAL_PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || '' }}
         run: |
-          if [ "$PROXY_TYPE" = "v2ray" ]; then
-            bash scripts/stop_v2ray_proxy.sh
+          if [ -n "$MANUAL_PROXY_TYPE" ]; then
+            if [ "$MANUAL_PROXY_TYPE" = "v2ray" ]; then
+              bash scripts/stop_v2ray_proxy.sh 2>/dev/null || true
+            else
+              bash scripts/stop_mihomo_proxy.sh 2>/dev/null || true
+            fi
+            exit 0
+          fi
+
+          V2RAY_URL="${{ secrets.V2RAY_SUBSCRIPTION_URL }}"
+          if [ -z "$V2RAY_URL" ]; then
+            V2RAY_URL="${V2RAY_SUBSCRIPTION_URL}"
+          fi
+
+          if [ -n "$V2RAY_URL" ]; then
+            bash scripts/stop_v2ray_proxy.sh 2>/dev/null || true
           else
-            bash scripts/stop_mihomo_proxy.sh
+            bash scripts/stop_mihomo_proxy.sh 2>/dev/null || true
           fi
 
       - name: 执行结果

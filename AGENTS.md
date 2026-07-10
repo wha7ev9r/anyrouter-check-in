@@ -83,6 +83,7 @@ uv run pre-commit run --all-files          # 手动触发 pre-commit
 | `v2ray`         | `scripts/setup_v2ray_proxy.py`  | 7891 | `V2RAY_SUBSCRIPTION_URL`                                          |
 
 - `scripts/setup_v2ray_proxy.py`：下载 xray-core → 拉取订阅 → 解析 vmess:///vless:///ss:///trojan:// URI → 逐个节点测试 → uTLS `fingerprint: chrome` 防 AI WAF → 找到可用节点后写 `CHECKIN_PROXY_URL`
+- `scripts/fetch_latest_free_nodes.py`：从 `free-nodes/v2rayfree` GitHub 仓库自动获取最新订阅文件 URL，输出到 stdout。无自定义订阅时 CI 会自动调用此脚本回退
 
 ## `.gitignore` 中的产物
 

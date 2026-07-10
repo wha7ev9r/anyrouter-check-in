@@ -51,7 +51,7 @@ XRAY_BASE_URL = 'https://github.com/XTLS/Xray-core/releases/download/{version}/X
 DEFAULT_XRAY_VERSION = 'v1.8.24'
 DEFAULT_PORT = 7890
 DEFAULT_TEST_URL = 'https://agentrouter.org'
-MAX_WORKERS = 200
+MAX_WORKERS = 30
 
 
 def log(msg: str) -> None:

@@ -515,7 +515,7 @@ def node_display_name(node: dict) -> str:
 	return str(node.get('ps') or node.get('add', 'unknown'))
 
 
-MAX_WORKERS = 200
+MAX_WORKERS = 30
 
 
 class PortPool:

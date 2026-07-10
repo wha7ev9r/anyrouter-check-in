@@ -26,6 +26,7 @@ jobs:
       PYTHONIOENCODING: utf-8
       PYTHONUNBUFFERED: 1
       DEBUG_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true' && 'true' || 'false' }}
+      HAS_CUSTOM_SUB: ${{ secrets.V2RAY_SUBSCRIPTION_URL != '' || secrets.CLASH_SUBSCRIPTION_URL != '' || secrets.PROXY_SUBSCRIPTION_URL != '' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -89,8 +90,6 @@ jobs:
             browser-profiles-${{ runner.os }}-
 
       - name: 获取最新免费节点订阅（无自定义订阅时）
-        env:
-          HAS_CUSTOM_SUB: ${{ secrets.V2RAY_SUBSCRIPTION_URL != '' || secrets.CLASH_SUBSCRIPTION_URL != '' || secrets.PROXY_SUBSCRIPTION_URL != '' }}
         if: env.HAS_CUSTOM_SUB == 'false'
         run: |
           echo "V2RAY_SUBSCRIPTION_URL=$(uv run python scripts/fetch_latest_free_nodes.py)" >> $GITHUB_ENV
@@ -103,27 +102,33 @@ jobs:
           PROXY_REQUIRED: false
           MANUAL_PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || '' }}
         run: |
-          if [ -n "$MANUAL_PROXY_TYPE" ]; then
-            echo "[INFO] Using manually specified proxy type: $MANUAL_PROXY_TYPE"
-            if [ "$MANUAL_PROXY_TYPE" = "v2ray" ]; then
-              export V2RAY_SUBSCRIPTION_URL="${{ secrets.V2RAY_SUBSCRIPTION_URL }}"
-              uv run python scripts/setup_v2ray_proxy.py
-            else
-              uv run python scripts/setup_clash_proxy.py
-            fi
-            exit $?
-          fi
-
           V2RAY_URL="${{ secrets.V2RAY_SUBSCRIPTION_URL }}"
           if [ -z "$V2RAY_URL" ]; then
             V2RAY_URL="${V2RAY_SUBSCRIPTION_URL}"
           fi
 
+          # 自动判定：有 v2ray 订阅 -> v2ray，否则有 clash 订阅 -> clash
+          PROXY_MODE=""
           if [ -n "$V2RAY_URL" ]; then
+            PROXY_MODE="v2ray"
+          elif [ -n "$CLASH_SUBSCRIPTION_URL" ]; then
+            PROXY_MODE="clash"
+          fi
+
+          # 手动指定的类型仅在确有对应订阅时生效，否则保持自动判定（含 free-nodes 自动拉取）
+          if [ -n "$MANUAL_PROXY_TYPE" ]; then
+            if [ "$MANUAL_PROXY_TYPE" = "v2ray" ] && [ -n "$V2RAY_URL" ]; then
+              PROXY_MODE="v2ray"
+            elif [ "$MANUAL_PROXY_TYPE" = "clash" ] && [ -n "$CLASH_SUBSCRIPTION_URL" ]; then
+              PROXY_MODE="clash"
+            fi
+          fi
+
+          if [ "$PROXY_MODE" = "v2ray" ]; then
             export V2RAY_SUBSCRIPTION_URL="$V2RAY_URL"
             echo "[INFO] PROXY_TYPE=v2ray — parsing v2ray subscription"
             uv run python scripts/setup_v2ray_proxy.py
-          elif [ -n "$CLASH_SUBSCRIPTION_URL" ]; then
+          elif [ "$PROXY_MODE" = "clash" ]; then
             echo "[INFO] PROXY_TYPE=clash — parsing Clash YAML subscription"
             uv run python scripts/setup_clash_proxy.py
           else
@@ -174,25 +179,32 @@ jobs:
       - name: 停止代理
         if: always()
         env:
+          CLASH_SUBSCRIPTION_URL: ${{ secrets.CLASH_SUBSCRIPTION_URL || secrets.PROXY_SUBSCRIPTION_URL }}
           MANUAL_PROXY_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_type || '' }}
         run: |
-          if [ -n "$MANUAL_PROXY_TYPE" ]; then
-            if [ "$MANUAL_PROXY_TYPE" = "v2ray" ]; then
-              bash scripts/stop_v2ray_proxy.sh 2>/dev/null || true
-            else
-              bash scripts/stop_mihomo_proxy.sh 2>/dev/null || true
-            fi
-            exit 0
-          fi
-
           V2RAY_URL="${{ secrets.V2RAY_SUBSCRIPTION_URL }}"
           if [ -z "$V2RAY_URL" ]; then
             V2RAY_URL="${V2RAY_SUBSCRIPTION_URL}"
           fi
 
+          PROXY_MODE=""
           if [ -n "$V2RAY_URL" ]; then
+            PROXY_MODE="v2ray"
+          elif [ -n "$CLASH_SUBSCRIPTION_URL" ]; then
+            PROXY_MODE="clash"
+          fi
+
+          if [ -n "$MANUAL_PROXY_TYPE" ]; then
+            if [ "$MANUAL_PROXY_TYPE" = "v2ray" ] && [ -n "$V2RAY_URL" ]; then
+              PROXY_MODE="v2ray"
+            elif [ "$MANUAL_PROXY_TYPE" = "clash" ] && [ -n "$CLASH_SUBSCRIPTION_URL" ]; then
+              PROXY_MODE="clash"
+            fi
+          fi
+
+          if [ "$PROXY_MODE" = "v2ray" ]; then
             bash scripts/stop_v2ray_proxy.sh 2>/dev/null || true
-          else
+          elif [ "$PROXY_MODE" = "clash" ]; then
             bash scripts/stop_mihomo_proxy.sh 2>/dev/null || true
           fi
 

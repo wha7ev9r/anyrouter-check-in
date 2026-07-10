@@ -90,11 +90,7 @@ jobs:
 
       - name: 获取最新免费节点订阅（无自定义订阅时）
         env:
-          HAS_CUSTOM_SUB: ${{
-            secrets.V2RAY_SUBSCRIPTION_URL != '' ||
-            secrets.CLASH_SUBSCRIPTION_URL != '' ||
-            secrets.PROXY_SUBSCRIPTION_URL != ''
-          }}
+          HAS_CUSTOM_SUB: ${{ secrets.V2RAY_SUBSCRIPTION_URL != '' || secrets.CLASH_SUBSCRIPTION_URL != '' || secrets.PROXY_SUBSCRIPTION_URL != '' }}
         if: env.HAS_CUSTOM_SUB == 'false'
         run: |
           echo "V2RAY_SUBSCRIPTION_URL=$(uv run python scripts/fetch_latest_free_nodes.py)" >> $GITHUB_ENV
